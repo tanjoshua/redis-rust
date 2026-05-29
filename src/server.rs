@@ -1,4 +1,4 @@
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 pub async fn run() -> anyhow::Result<()> {
@@ -11,7 +11,15 @@ pub async fn run() -> anyhow::Result<()> {
 }
 
 async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
-    stream.write_all(b"+PONG\r\n").await?;
+    let mut buf = [0; 512];
+    loop {
+        let bytes_read = stream.read(&mut buf).await?;
+        if bytes_read == 0 {
+            // client disconnected
+            break;
+        }
+        stream.write_all(b"+PONG\r\n").await?;
+    }
     stream.flush().await?;
     Ok(())
 }
