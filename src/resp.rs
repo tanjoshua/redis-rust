@@ -16,36 +16,50 @@ fn parse_resp(input: &[u8]) -> anyhow::Result<RESPData> {
     Ok(res)
 }
 
-fn parse_resp_value(input: &[u8], _cursor: usize) -> anyhow::Result<(RESPData, usize)> {
-    if _cursor >= input.len() {
+fn parse_resp_value(input: &[u8], starting_cursor: usize) -> anyhow::Result<(RESPData, usize)> {
+    if starting_cursor >= input.len() {
         anyhow::bail!("Invalid cursor")
     }
 
-    let mut cursor = _cursor;
+    let mut cursor = starting_cursor;
     let value = input[cursor];
     match value {
         b'*' => {
             // array
             // find element count
             let count_start = cursor + 1;
-            let mut count_end = count_start;
+            let mut cursor = count_start;
 
-            while count_end < input.len() && input[count_end] != b'\r' {
-                count_end += 1
+            while cursor < input.len() && input[cursor] != b'\r' {
+                cursor += 1
             }
 
-            let element_count_bytes = &input[count_start..count_end];
-            let element_count_str = str::from_utf8(element_count_bytes)?;
-            let element_count = element_count_str.parse::<usize>();
+            if cursor >= input.len() {
+                anyhow::bail!("missing carriage return end")
+            }
 
-            cursor = count_end + 1;
+            let element_count_bytes = &input[count_start..cursor];
+            let element_count_str = str::from_utf8(element_count_bytes)?;
+            let element_count = element_count_str.parse::<usize>()?;
+
+            // verify \r\n ending
+            cursor += 1;
             if cursor >= input.len() || input[cursor] != b'\n' {
                 anyhow::bail!("invalid input")
             }
             cursor += 1;
 
+            // create result
+            let mut res_vec = Vec::<RESPData>::with_capacity(element_count);
+
             // start retrieving elements from cursor
-            Ok((RESPData::Array(Vec::new()), cursor))
+            for _ in 0..element_count {
+                let (resp_data, new_cursor) = parse_resp_value(input, cursor)?;
+                res_vec.push(resp_data);
+                cursor = new_cursor;
+            }
+
+            Ok((RESPData::Array(res_vec), cursor))
         }
         b'+' => {
             // simple string
