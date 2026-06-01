@@ -18,6 +18,8 @@ async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
             // client disconnected
             break;
         }
+        let request = str::from_utf8(&buf).unwrap();
+        println!("{:?}", request);
         stream.write_all(b"+PONG\r\n").await?;
     }
     stream.flush().await?;
