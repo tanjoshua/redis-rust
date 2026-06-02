@@ -1,6 +1,8 @@
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
+use crate::resp::parse_resp;
+
 pub async fn run() -> anyhow::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
 
@@ -19,7 +21,8 @@ async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
             break;
         }
         let request = str::from_utf8(&buf).unwrap();
-        println!("{:?}", request);
+        let resp_data = parse_resp(&buf)?;
+        println!("{:?}", resp_data);
         stream.write_all(b"+PONG\r\n").await?;
     }
     stream.flush().await?;

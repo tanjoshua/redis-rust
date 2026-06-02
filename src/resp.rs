@@ -1,8 +1,10 @@
 use thiserror::Error;
 
-enum RESPData {
+#[derive(Debug)]
+pub enum RESPData {
     SimpleString(String),
     Array(Vec<RESPData>),
+    BulkString(Vec<u8>),
 }
 
 impl From<RESPData> for String {
@@ -11,7 +13,7 @@ impl From<RESPData> for String {
     }
 }
 
-fn parse_resp(input: &[u8]) -> anyhow::Result<RESPData> {
+pub fn parse_resp(input: &[u8]) -> anyhow::Result<RESPData> {
     let (res, _) = parse_resp_value(input, 0)?;
     Ok(res)
 }
@@ -26,28 +28,11 @@ fn parse_resp_value(input: &[u8], starting_cursor: usize) -> anyhow::Result<(RES
     match value {
         b'*' => {
             // array
-            // find element count
-            let count_start = cursor + 1;
-            let mut cursor = count_start;
-
-            while cursor < input.len() && input[cursor] != b'\r' {
-                cursor += 1
-            }
-
-            if cursor >= input.len() {
-                anyhow::bail!("missing carriage return end")
-            }
-
-            let element_count_bytes = &input[count_start..cursor];
+            cursor += 1;
+            let (element_count_bytes, new_cursor) = read_bytes_until_crlf(input, cursor)?;
+            cursor = new_cursor;
             let element_count_str = str::from_utf8(element_count_bytes)?;
             let element_count = element_count_str.parse::<usize>()?;
-
-            // verify \r\n ending
-            cursor += 1;
-            if cursor >= input.len() || input[cursor] != b'\n' {
-                anyhow::bail!("invalid input")
-            }
-            cursor += 1;
 
             // create result
             let mut res_vec = Vec::<RESPData>::with_capacity(element_count);
@@ -63,34 +48,64 @@ fn parse_resp_value(input: &[u8], starting_cursor: usize) -> anyhow::Result<(RES
         }
         b'+' => {
             // simple string
-            let str_start = cursor + 1;
-            cursor = str_start;
-
-            while cursor < input.len() && input[cursor] != b'\r' {
-                cursor += 1
-            }
-
-            if cursor >= input.len() {
-                anyhow::bail!("missing carriage return end")
-            }
-
-            // retrieve simple string
-            let simple_string_bytes = &input[str_start..cursor];
-            let simple_string = str::from_utf8(simple_string_bytes)?.to_string();
-
-            // verify \r\n ending
             cursor += 1;
-            if cursor >= input.len() || input[cursor] != b'\n' {
-                anyhow::bail!("invalid input")
-            }
-
-            cursor += 1;
+            let (str_bytes, cursor) = read_bytes_until_crlf(input, cursor)?;
+            let simple_string = str::from_utf8(str_bytes)?.to_string();
 
             Ok((RESPData::SimpleString(simple_string), cursor))
         }
+        b'$' => {
+            // bulk string
+            cursor += 1;
+            let (str_len_bytes, new_cursor) = read_bytes_until_crlf(input, cursor)?;
+            cursor = new_cursor;
 
+            let str_len = str::from_utf8(str_len_bytes)?.parse::<usize>()?;
+            if cursor + str_len + 2 > input.len() {
+                anyhow::bail!("Bulk string length exceeded input")
+            }
+
+            let bulk_str = input[cursor..cursor + str_len].to_vec();
+
+            // verify \r\n
+            cursor += str_len;
+            if input[cursor] != b'\r' || input[cursor + 1] != b'\n' {
+                anyhow::bail!("Missing carriage return")
+            }
+            cursor += 2;
+
+            Ok((RESPData::BulkString(bulk_str), cursor))
+        }
         _ => {
             anyhow::bail!("invalid RESP data type")
         }
     }
+}
+
+pub fn read_bytes_until_crlf(
+    input: &[u8],
+    starting_cursor: usize,
+) -> anyhow::Result<(&[u8], usize)> {
+    let mut cursor = starting_cursor;
+    let bytes_start = cursor;
+    while cursor < input.len() && input[cursor] != b'\r' {
+        cursor += 1
+    }
+
+    if cursor >= input.len() {
+        anyhow::bail!("missing carriage return");
+    }
+
+    let res = &input[bytes_start..cursor];
+
+    // verify \r\n ending
+    cursor += 1;
+    if cursor >= input.len() || input[cursor] != b'\n' {
+        anyhow::bail!("missing carriage return")
+    }
+
+    // advance cursor to after crlf
+    cursor += 1;
+
+    Ok((res, cursor))
 }
