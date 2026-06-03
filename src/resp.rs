@@ -7,9 +7,21 @@ pub enum RESPData {
     BulkString(Vec<u8>),
 }
 
-impl From<RESPData> for String {
-    fn from(data: RESPData) -> String {
-        String::from("")
+impl From<&RESPData> for Vec<u8> {
+    fn from(data: &RESPData) -> Vec<u8> {
+        match data {
+            RESPData::SimpleString(ss) => format!("+{}\r\n", ss).as_bytes().to_vec(),
+            RESPData::BulkString(bulk_str) => {
+                let mut res = Vec::new();
+                res.extend_from_slice(b"$");
+                res.extend(bulk_str.len().to_string().as_bytes());
+                res.extend(b"\r\n");
+                res.extend(bulk_str);
+                res.extend(b"\r\n");
+                res
+            }
+            _ => Vec::new(),
+        }
     }
 }
 

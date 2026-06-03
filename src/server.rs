@@ -1,7 +1,7 @@
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::resp::parse_resp;
+use crate::resp::{RESPData, parse_resp};
 
 pub async fn run() -> anyhow::Result<()> {
     let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
@@ -20,10 +20,27 @@ async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
             // client disconnected
             break;
         }
-        let request = str::from_utf8(&buf).unwrap();
-        let resp_data = parse_resp(&buf)?;
+        let resp_data = parse_resp(&buf[..bytes_read])?;
         println!("{:?}", resp_data);
-        stream.write_all(b"+PONG\r\n").await?;
+
+        let RESPData::Array(resp_commands) = resp_data else {
+            anyhow::bail!("Invalid RESP command")
+        };
+
+        if resp_commands.is_empty() {
+            anyhow::bail!("Empty RESP array")
+        }
+
+        let res = match &resp_commands[0] {
+            RESPData::BulkString(bulk_string) => match bulk_string.as_slice() {
+                b"PING" => &RESPData::SimpleString(String::from("PONG")),
+                b"ECHO" => &resp_commands[1],
+                _ => &RESPData::SimpleString(String::from("Unimplemented")),
+            },
+            _ => anyhow::bail!("Invalid RESP command"),
+        };
+
+        stream.write_all(Vec::<u8>::from(res).as_slice()).await?;
     }
     stream.flush().await?;
     Ok(())
