@@ -5,6 +5,7 @@ pub enum RESPData {
     SimpleString(String),
     Array(Vec<RESPData>),
     BulkString(Vec<u8>),
+    NullBulkString,
 }
 
 impl From<&RESPData> for Vec<u8> {
@@ -20,6 +21,7 @@ impl From<&RESPData> for Vec<u8> {
                 res.extend(b"\r\n");
                 res
             }
+            RESPData::NullBulkString => b"$-1\r\n".to_vec(),
             _ => Vec::new(),
         }
     }

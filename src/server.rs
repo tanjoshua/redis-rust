@@ -50,8 +50,18 @@ async fn handle_connection(mut stream: TcpStream, data_store: Store) -> anyhow::
                         anyhow::bail!("SET requires a key and value")
                     };
 
-                    handle_set(&data_store, key.clone(), value.clone()).await;
+                    data_store.write().await.insert(key.clone(), value.clone());
                     &RESPData::SimpleString(String::from("OK"))
+                }
+                b"GET" => {
+                    let [_, RESPData::BulkString(key)] = resp_commands.as_slice() else {
+                        anyhow::bail!("SET requires a key and value")
+                    };
+
+                    match data_store.read().await.get(key) {
+                        Some(value) => &RESPData::BulkString(value.clone()),
+                        None => &RESPData::NullBulkString,
+                    }
                 }
                 _ => &RESPData::SimpleString(String::from("Unimplemented")),
             },
@@ -62,8 +72,4 @@ async fn handle_connection(mut stream: TcpStream, data_store: Store) -> anyhow::
     }
     stream.flush().await?;
     Ok(())
-}
-
-async fn handle_set(data_store: &Store, key: Vec<u8>, value: Vec<u8>) {
-    data_store.write().await.insert(key, value);
 }
