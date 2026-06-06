@@ -8,8 +8,8 @@ pub enum RESPData {
     NullBulkString,
 }
 
-impl From<&RESPData> for Vec<u8> {
-    fn from(data: &RESPData) -> Vec<u8> {
+impl From<RESPData> for Vec<u8> {
+    fn from(data: RESPData) -> Vec<u8> {
         match data {
             RESPData::SimpleString(ss) => format!("+{}\r\n", ss).as_bytes().to_vec(),
             RESPData::BulkString(bulk_str) => {
