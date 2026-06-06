@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-
+use std::time::{Duration, SystemTime};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
+use tokio::time::Instant;
 
 use crate::resp::{RESPData, parse_resp};
-
-type Store = Arc<RwLock<HashMap<Vec<u8>, Vec<u8>>>>;
+use crate::store::{RedisData, Store};
 
 pub async fn run() -> anyhow::Result<()> {
     let data_store: Store = Arc::new(RwLock::new(HashMap::new()));
@@ -44,13 +44,49 @@ async fn handle_connection(mut stream: TcpStream, data_store: Store) -> anyhow::
                 b"PING" => &RESPData::SimpleString(String::from("PONG")),
                 b"ECHO" => &resp_commands[1],
                 b"SET" => {
-                    let [_, RESPData::BulkString(key), RESPData::BulkString(value)] =
-                        resp_commands.as_slice()
+                    if resp_commands.len() < 3 {
+                        anyhow::bail!("Invalid SET command")
+                    }
+                    let (RESPData::BulkString(key), RESPData::BulkString(value)) =
+                        (&resp_commands[1], &resp_commands[2])
                     else {
                         anyhow::bail!("SET requires a key and value")
                     };
 
-                    data_store.write().await.insert(key.clone(), value.clone());
+                    let mut i = 3;
+                    let mut expiry = None;
+                    while i < resp_commands.len() {
+                        let RESPData::BulkString(option) = &resp_commands[i] else {
+                            anyhow::bail!("Invalid option")
+                        };
+                        let RESPData::BulkString(option_value) = &resp_commands[i + 1] else {
+                            anyhow::bail!("Invalid option value")
+                        };
+
+                        match option.as_slice() {
+                            b"EX" => {}
+                            b"PX" => {
+                                let validity_str = str::from_utf8(option_value)?;
+                                let validity_in_ms = validity_str.parse::<u64>()?;
+
+                                let validity_duration = Duration::from_millis(validity_in_ms);
+                                expiry = Some(Instant::now() + validity_duration);
+                            }
+                            _ => {
+                                anyhow::bail!("Unrecognized option")
+                            }
+                        }
+
+                        i += 2;
+                    }
+
+                    data_store.write().await.insert(
+                        key.clone(),
+                        RedisData {
+                            value: value.clone(),
+                            expiry,
+                        },
+                    );
                     &RESPData::SimpleString(String::from("OK"))
                 }
                 b"GET" => {
@@ -58,8 +94,16 @@ async fn handle_connection(mut stream: TcpStream, data_store: Store) -> anyhow::
                         anyhow::bail!("SET requires a key and value")
                     };
 
-                    match data_store.read().await.get(key) {
-                        Some(value) => &RESPData::BulkString(value.clone()),
+                    let store = data_store.write().await;
+                    match store.get(key) {
+                        Some(rdata) => {
+                            let is_expired = rdata.expiry.is_some_and(|e| e <= Instant::now());
+                            if is_expired {
+                                &RESPData::NullBulkString
+                            } else {
+                                &RESPData::BulkString(rdata.value.clone())
+                            }
+                        }
                         None => &RESPData::NullBulkString,
                     }
                 }

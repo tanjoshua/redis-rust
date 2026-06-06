@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum RESPData {
     SimpleString(String),
     Array(Vec<RESPData>),
